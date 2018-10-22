@@ -190,7 +190,18 @@ else
 		$testCount = $seqrandSet.Count * $opsSet.Count * $writeperc.Count
 		
 		Write-Host Number of tests to be executed: $testCount
-		Write-Host "Approximate time to complete test:" ([System.Math]::Ceiling($testCount * $time / 60)) "minute(s)"
+		
+		if ($AllowIdle -eq "N")
+		{
+			Write-Host "Approximate time to complete test:" ([System.Math]::Ceiling($testCount * $time / 60)) "minute(s)"
+		}
+		elseif ($AllowIdle -eq "Y")
+		{
+			$testRun = [System.Math]::Ceiling($testCount * $time / 60)
+			$idleTime = [System.Math]::Ceiling($testCount * 20 / 60)
+			$totalTime = [System.Math]::Ceiling($testRun + $idleTime)
+			Write-Host "Approximate time to complete test: $totalTime minute(s)"
+		}
 		$currentDir = Split-Path $myinvocation.mycommand.path
 		
 		Write-Host ""
@@ -376,6 +387,7 @@ else
 		$excel.Save()
 		$excel.Dispose()
 		
+		Remove-Item -Path $dataFile -Force
 	}
 	else
 	{
