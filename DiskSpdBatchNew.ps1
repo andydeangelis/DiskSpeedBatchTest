@@ -24,10 +24,7 @@
 	.PARAMETER Time
     Set your individual test duration in seconds - req minimum 30 seconds per test
 
-	.PARAMETER DataFileDir
-    Workload data file path and name.    
-
-	.PARAMETER DataFile
+	.PARAMETER DataFiles
     Workload data file name.
 
     .PARAMETER DataFileSize
@@ -36,8 +33,8 @@
     .PARAMETER BlockSize
     Change the test block size (in KB "K" or MB "M") according to your application workload profile.
 
-    .PARAMETER OutPath
-    Path to store output to.
+    .PARAMETER ReportPath
+    Path to store output to. A new timestamped sub-directory will be created for each test.
 
     .PARAMETER SplitIO
     Test permutations of %R/%W in a single test
@@ -54,13 +51,11 @@ param (
 	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
 	[string]$time,
 	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
-	[string]$dataFileDir,
-	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
-	[string]$dataFiles,
+	$dataFiles,
 	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
 	[string]$dataFileSize,
 	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
-	[string]$outPath,
+	[string]$ReportPath,
 	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
 	[string]$BlockSize,	
 	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
@@ -68,8 +63,11 @@ param (
 	[parameter(Mandatory = $true, ValueFromPipeline = $true)]
 	[string]$AllowIdle,
 	[parameter(Mandatory = $false, ValueFromPipeline = $true)]
-	[string]$EntropySize
+	[string]$EntropySize = "1G"
 )
+
+# Import the ImportExcel module, which can be downloaded from https://github.com/dfinke/ImportExcel.
+Import-Module -Name "$PSScriptRoot\Modules\ImportExcel\ImportExcel.psm1" -Scope Local -PassThru
 
 if ($PSVersionTable.PSVersion.Major -lt 3)
 {
@@ -77,8 +75,7 @@ if ($PSVersionTable.PSVersion.Major -lt 3)
 	return
 }
 else
-{
-	
+{	
 	Clear-Host
 	
 	$sArgs = @()
@@ -97,28 +94,54 @@ else
 		$diskspdExePath = ".\DiskSpd\x86"
 	}
 	
-	#Testing that directories for new data files exist
-	foreach ($folder in $datafiledir)
+	# Set the date/time stamp
+	$startDate = get-date -f MM-dd-yyyy_hh.mm.ss
+	
+	# Test if the Report Path directory exists.	
+	if ((test-path "$ReportPath\DiskSpdTest\$startDate") -eq $false)
 	{
-		if ((test-path $folder) -eq $false)
+		try
 		{
-			$noDir = $true
+			New-Item -Path "$ReportPath\DiskSpdTest\$startDate" -ItemType "directory"
+		}
+		catch
+		{
+			Write-Host "Unable to create output directory." -ForegroundColor Red
 		}
 	}
 	
+	
 	#Building datafile args(this is to handle multiple data files in the future)
-	foreach ($datafile in $dataFiles)
+	foreach ($item in $dataFiles)
 	{
-		$sArgs += "$datafile"		
+		$file = Split-Path -Path $item -Leaf
+		$dataFileDir = Split-Path $item
+		$dataFileDir = "$dataFileDir\"
+		
+		# Testing that directories for new data files exist
+		foreach ($folder in $datafiledir)
+		{
+			if ((test-path "$folder\DiskSpdTest\$startDate") -eq $false)
+			{
+				try
+				{
+					New-Item -Path "$folder\DiskSpdTest\$startDate" -ItemType "directory"
+				}
+				catch
+				{
+					$noDir = $true
+				}
+			}
+		}
+		
+		$datafile = "$dataFileDir" + "DiskSpdTest\$startDate\$file"
+		$sArgs += "$datafile"
 	}
 	
-	if (((test-path $outpath) -eq $true) -And (-Not ($noDir)))
+	if (((test-path $ReportPath) -eq $true) -And (-Not ($noDir)))
 	{
 		
 		# Variables
-		
-		# Set the date/time stamp
-		$startDate = Get-Date
 		
 		# Get the source path of the executing script.
 		$invocation = (Get-Variable MyInvocation).Value
@@ -131,25 +154,25 @@ else
 		
 		# Array containing values for maximum simultaneous iops for each test run.
 		$opsSet = @(1, 2, 4, 8, 16, 32, 64, 128)
+		# $opsSet = @(1)
 		
 		
-		# Get CPU cores to determine number of threads.
+		# Get CPU info to determine number of threads.
 		$processors = get-wmiobject -computername localhost Win32_ComputerSystem
 		$threads = 0
-		if (@($processors).NumberOfLogicalProcessors)
+		try
 		{
 			$threads = @($processors).NumberOfLogicalProcessors			
 		}
-		else
+		catch
 		{
 			$threads = @($processors).NumberOfProcessors
 		}
 		
 		# Timestamp the output file.
 		$filename = "diskspd_results_" + (Get-Date -format '_yyyyMMdd_HHmmss') + ".xml"
-		$outfile = Join-Path -Path $outPath -childpath $filename
+		$outfile = "$ReportPath\DiskSpdTest\$startDate\$filename"
 		$csvfile = $outfile -replace ".xml", ".csv"
-		
 		
 		# If opt to perform R&W testing in a single test, set steppoints here
 		if ($SplitIO -eq "Y")
@@ -218,8 +241,8 @@ else
 					#$arguments = "-c$dataFileSize -w$writetest -t$threads -d$time -o$ops $rnd -b$BlockSize -C1 -Z$EntropySize -W1 -Rxml -L -h `"$dataFile`""
 					$arguments = "-c$dataFileSize -w$writetest -t$threads -d$time -o$ops $rnd -b$BlockSize -C1 -Z$EntropySize -W1 -Rxml -L -h $sArgs"
 					
-					# DEBUG, breaks XML compliance
-					Write-Output "diskspd.exe  $arguments" | Out-File "$outpath\Debug.log" -append
+					# Command list output
+					Write-Output "diskspd.exe  $arguments" | Out-File "$ReportPath\DiskSpdTest\$startDate\CommandOutput_$startDate.log" -append
 					
 					$p.StartInfo.Arguments = $arguments
 					$p.Start() | Out-Null
@@ -250,7 +273,7 @@ else
 		# Close the XML root node
 		"</DiskSpdTests>" >> $outfile
 		
-		Write-Output "Done DiskSpd testing. Now creating CSV output file."
+		Write-Output "Done DiskSpd testing. Now creating CSV output file and Excel report."
 		
 		#Export test results as .csv
 		
@@ -347,12 +370,18 @@ else
 		}
 		$resultobj | Export-Csv -Path $csvfile -NoTypeInformation
 		
+		Copy-Item -Path "$PSScriptRoot\Diskspd_Analysis_Template.xlsx" -Destination "$ReportPath\DiskSpdTest\$startDate\Diskspd_Analysis_$startDate.xlsx"
+		
+		$excel = Import-Csv -Path $csvfile | Export-Excel -Path "$ReportPath\DiskSpdTest\$startDate\Diskspd_Analysis_$startDate.xlsx" -WorkSheetname "RAW" -PassThru
+		$excel.Save()
+		$excel.Dispose()
+		
 	}
 	else
 	{
-		if ((test-path $outpath) -eq $false)
+		if ((test-path $ReportPath) -eq $false)
 		{
-			Write-Host "$outPath doesnt exist and needs to be created..." -ForegroundColor red -BackgroundColor yellow
+			Write-Host "$ReportPath doesnt exist and needs to be created..." -ForegroundColor red -BackgroundColor yellow
 		}
 		foreach ($folder in $datafiledir)
 		{
